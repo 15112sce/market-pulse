@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>Market Pulse</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{
+  width:100%;
+  height:100%;
+  background:#000;
+  color:#fff;
+  font-family:'IBM Plex Mono', monospace;
+  overflow-x:hidden;
+  overflow-y:auto;
+}
+.root{
+  height:100vh;
+  display:flex;
+  flex-direction:column;
+  padding:6px 14px;
+}
+.top{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:13px;
+  color:#fff;
+  padding-bottom:5px;
+  border-bottom:1px solid #333;
+  margin-bottom:6px;
+  flex-shrink:0;
+}
+.top-label{ font-size:13px; color:#fff; letter-spacing:2px; }
+
+/* 主内容区 — 靠上居中，不强制撑满 */
+.page{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  text-align:center;
+  padding: 2vh 0 0 0;
+}
+
+/* 字体 */
+.big{font-size:52px; font-weight:600; letter-spacing:-1px; line-height:1.1;}
+.mid{font-size:20px; margin-top:6px; color:#fff;}
+.tag{font-size:18px; margin-top:10px; font-weight:600; color:#fff; letter-spacing:2px;}
+.val{font-size:20px; margin-top:4px; font-weight:600; color:#fff;}
+.green{color:#00ff66;}
+.red{color:#ff4444;}
+.yellow{color:#ffd54a;}
+.dim{color:#fff;}
+
+/* 价格行 — 紧凑版 */
+.price-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  width: 100%;
+  max-width: 440px;
+  margin: 5px 0;
+  gap: 10px;
+}
+.coin {
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+  min-width: 42px;
+  text-align: left;
+}
+.price {
+  font-size: 52px;
+  font-weight: 600;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+.change {
+  font-size: 20px;
+  font-weight: 500;
+  min-width: 80px;
+  text-align: right;
+}
+
+/* FG 行 */
+.fg-row{
+  margin-top: 12px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.fg-label{ font-size:13px; color:#fff; letter-spacing:2px; }
+.fg-val{ font-size:22px; font-weight:600; }
+.fg-desc{ font-size:16px; }
+
+/* Footer */
+.footer{
+  border-top:1px solid #333;
+  padding-top:8px;
+  padding-bottom:4px;
+  font-size:13px;
+  color:#fff;
+  text-align:center;
+  flex-shrink:0;
+  letter-spacing:1px;
+}
+
+/* 进度条 */
+.progress-bar{
+  width:100%;
+  height:1px;
+  background:#333;
+  margin-bottom:4px;
+}
+.progress-fill{
+  height:1px;
+  background:#fff;
+  transition:width 0.1s linear;
+}
+</style>
+</head>
+<body>
+<div class="root">
+  <div class="top">
+    <div class="top-label">MARKET PULSE</div>
+    <div id="clock">--:--:--</div>
+  </div>
+  <div class="page" id="page"></div>
+  <div class="progress-bar"><div class="progress-fill" id="prog"></div></div>
+  <div class="footer" id="footer">—</div>
+  <div style="height:120px;pointer-events:none;opacity:0;"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let S = {};
+let idx = 0;
+const PAGE_MS = 5000;
+let pageTimer = null;
+let progStart = null;
+
+/* ── 时钟 ── */
+function tick(){
+  const n = new Date();
+  $('clock').textContent = [n.getHours(), n.getMinutes(), n.getSeconds()]
+    .map(x => String(x).padStart(2,'0')).join(':');
+}
+
+/* ── 进度条 ── */
+function animProg(){
+  progStart = Date.now();
+  function frame(){
+    const elapsed = Date.now() - progStart;
+    const pct = Math.min(elapsed / PAGE_MS * 100, 100);
+    $('prog').style.width = pct + '%';
+    if(pct < 100) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ── 数据获取 ── */
+async function fetchPrices(){
+  try {
+    const r = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","SOLUSDT","ETHUSDT"]');
+    const d = await r.json();
+    const btc = d.find(x=>x.symbol==='BTCUSDT');
+    const sol = d.find(x=>x.symbol==='SOLUSDT');
+    const eth = d.find(x=>x.symbol==='ETHUSDT');
+    S.btc  = +btc.lastPrice;   S.btcC  = +btc.priceChangePercent;
+    S.sol  = +sol.lastPrice;   S.solC  = +sol.priceChangePercent;
+    S.eth  = +eth.lastPrice;   S.ethC  = +eth.priceChangePercent;
+  } catch(e){ console.error('price',e); }
+}
+
+async function fetchFG(){
+  try {
+    const r = await fetch('https://api.alternative.me/fng/?limit=1');
+    const d = await r.json();
+    S.fg = +d.data[0].value;
+  } catch(e){ console.error('fg',e); }
+}
+
+async function fetchFunding(){
+  try {
+    const r = await fetch('https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT');
+    const d = await r.json();
+    S.fr = +d.result.list[0].fundingRate;
+  } catch(e){ console.error('fr',e); }
+}
+
+async function fetchGlobal(){
+  try {
+    const r = await fetch('https://api.coingecko.com/api/v3/global');
+    const d = await r.json();
+    S.btcDom = d.data.market_cap_percentage.btc;
+    S.totalMcap = d.data.total_market_cap.usd;
+  } catch(e){ S.btcDom = S.btcDom || null; }
+}
+
+async function fetchKlines(){
+  try {
+    const r = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=48');
+    const d = await r.json();
+    S.klines = d.map(k => ({
+      o: +k[1], h: +k[2], l: +k[3], c: +k[4]
+    }));
+  } catch(e){ console.error('klines',e); }
+}
+
+async function fetchOI(){
+  try {
+    // Binance 合约未平仓量
+    const r = await fetch('https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT');
+    const d = await r.json();
+    S.oi = +d.openInterest * S.btc; // 换算成美元
+  } catch(e){ console.error('oi',e); }
+}
+
+/* ── 工具 ── */
+function fmt(n){ return n >= 1e9 ? (n/1e9).toFixed(1)+'B' : (n/1e6).toFixed(0)+'M'; }
+function chg(v){ const up=v>=0; return `<span class="${up?'green':'red'}">${up?'↑':'↓'}${Math.abs(v).toFixed(1)}%</span>`; }
+function fgLabel(v){ return v<=25?'极度恐慌':v<=45?'恐惧':v<=55?'中性':v<=75?'贪婪':'极度贪婪'; }
+function fgColor(v){ return v<=25?'red':v<=45?'yellow':v<=55?'yellow':v<=75?'green':'green'; }
+
+/* ── Page 1: 价格 ── */
+function p1(){
+  return `
+    <div class="price-row">
+      <div class="coin">BTC</div>
+      <div class="price">$${Math.round(S.btc||0).toLocaleString()}</div>
+      <div class="change">${chg(S.btcC||0)}</div>
+    </div>
+    <div class="price-row">
+      <div class="coin">SOL</div>
+      <div class="price">$${(S.sol||0).toFixed(2)}</div>
+      <div class="change">${chg(S.solC||0)}</div>
+    </div>
+    <div class="price-row">
+      <div class="coin">ETH</div>
+      <div class="price" style="font-size:52px;">$${Math.round(S.eth||0).toLocaleString()}</div>
+      <div class="change" style="font-size:20px;">${chg(S.ethC||0)}</div>
+    </div>
+    <div class="fg-row">
+      <div class="fg-label">F&G</div>
+      <div class="fg-val ${S.fg ? fgColor(S.fg) : 'dim'}">${S.fg || '--'}</div>
+      <div class="fg-desc ${S.fg ? fgColor(S.fg) : 'dim'}">${S.fg ? fgLabel(S.fg) : ''}</div>
+    </div>
+  `;
+}
+
+/* ── Page 2: 资金费率 & OI ── */
+function p2(){
+  const fr = S.fr;
+  const up = fr > 0;
+  const frAbs = Math.abs(fr*100);
+  // 热度判断
+  const hot = frAbs > 0.05;
+  const extreme = frAbs > 0.1;
+  let frTone = extreme ? (up?'多头过热':'空头踩踏') : hot ? (up?'多头偏强':'空头偏强') : '资金中性';
+  let frColor = extreme ? (up?'red':'green') : hot ? (up?'yellow':'yellow') : 'white';
+
+  return `
+    <div class="tag">FUNDING RATE</div>
+    <div class="big ${frColor}">${(fr*100).toFixed(4)}%</div>
+    <div class="mid">${up?'多头付费给空头':'空头付费给多头'}</div>
+    <div class="val ${frColor}" style="margin-top:14px">${frTone}</div>
+    ${S.oi ? `<div class="mid" style="margin-top:8px">OI &nbsp;$${fmt(S.oi)}</div>` : ''}
+  `;
+}
+
+/* ── Page 3: 市场判断 ── */
+function p3(){
+  /*
+    逻辑说明（加权打分，-6 到 +6）：
+    +2 / -2  BTC + SOL 同向涨跌幅 > 1%
+    +1 / -1  仅一个涨跌 > 0.5%
+    +1 / -1  F&G > 65 看多 / < 35 看空
+    +1 / -1  FR > 0.005% 多头过热（偏空信号）/ FR < -0.005% 空头过度（偏多信号）
+    +1       BTC.D 上升 > 52%（主流币强势）/ 下降 < 48%（山寨季信号，中性标注）
+  */
+  let score = 0;
+  const msgs = [];
+
+  // 价格动能
+  const bothUp   = S.btcC > 1 && S.solC > 1;
+  const bothDown = S.btcC < -1 && S.solC < -1;
+  const slightUp  = !bothUp && (S.btcC > 0.5 || S.solC > 0.5);
+  const slightDown= !bothDown && (S.btcC < -0.5 || S.solC < -0.5);
+  if(bothUp)   { score+=2; msgs.push('主流齐涨'); }
+  else if(bothDown){ score-=2; msgs.push('主流齐跌'); }
+  else if(slightUp)  { score+=1; msgs.push('小幅偏强'); }
+  else if(slightDown){ score-=1; msgs.push('小幅偏弱'); }
+
+  // 情绪
+  if(S.fg > 65){ score+=1; msgs.push('情绪贪婪'); }
+  else if(S.fg < 35){ score-=1; msgs.push('情绪恐慌'); }
+
+  // 资金费率（反向信号：极度多头 = 过热 = 偏空）
+  if(S.fr > 0.0008){ score-=1; msgs.push('多头过热'); }
+  else if(S.fr < -0.0002){ score+=1; msgs.push('空头过度'); }
+
+  // BTC 主导
+  if(S.btcDom > 52){ score+=1; msgs.push('BTC主导强'); }
+  else if(S.btcDom < 48){ msgs.push('山寨轮动'); }
+
+  let verdict, color;
+  if(score >= 3)       { verdict='强势偏多'; color='green'; }
+  else if(score >= 1)  { verdict='温和偏多'; color='green'; }
+  else if(score <= -3) { verdict='强势偏空'; color='red'; }
+  else if(score <= -1) { verdict='温和偏空'; color='red'; }
+  else                 { verdict='震荡中性'; color='yellow'; }
+
+  return `
+    <div class="tag">MARKET VERDICT</div>
+    <div class="big ${color}">${verdict}</div>
+    <div class="mid" style="margin-top:10px">${msgs.join(' · ') || '信号不足'}</div>
+    <div class="val dim" style="margin-top:8px">score ${score>0?'+':''}${score} &nbsp;|&nbsp; BTC.D ${S.btcDom?.toFixed(1)||'--'}%</div>
+  `;
+}
+
+/* ── Page 4: BTC K线图 ── */
+function p4(){
+  const klines = S.klines;
+  if(!klines || klines.length < 2){
+    return `<div class="tag">BTC 4H CHART</div><div class="mid" style="margin-top:20px">加载中...</div>`;
+  }
+
+  const W = 500, H = 165;
+  const padL = 8, padR = 58, padT = 18, padB = 18;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+  const n = klines.length;
+
+  const allH = klines.map(k=>k.h), allL = klines.map(k=>k.l);
+  const priceMax = Math.max(...allH);
+  const priceMin = Math.min(...allL);
+  const priceRange = priceMax - priceMin || 1;
+
+  const py = p => padT + (1 - (p - priceMin) / priceRange) * chartH;
+  const cx = i => padL + (i + 0.5) * (chartW / n);
+  const candleW = Math.max(2, chartW / n * 0.6);
+
+  const ma20 = klines.map((_, i) => {
+    if(i < 19) return null;
+    return klines.slice(i-19, i+1).reduce((s,k)=>s+k.c,0) / 20;
+  });
+  const maPoints = ma20
+    .map((v,i) => v != null ? `${cx(i).toFixed(1)},${py(v).toFixed(1)}` : null)
+    .filter(Boolean).join(' ');
+
+  const cur = klines[n-1].c;
+  const curY = py(cur).toFixed(1);
+
+  let candles = '';
+  klines.forEach((k, i) => {
+    const up = k.c >= k.o;
+    const col = up ? '#00ff66' : '#ff4444';
+    const bodyTop = py(Math.max(k.o, k.c));
+    const bodyBot = py(Math.min(k.o, k.c));
+    const bodyH = Math.max(1, bodyBot - bodyTop);
+    const x = cx(i);
+    candles += `<line x1="${x.toFixed(1)}" y1="${py(k.h).toFixed(1)}" x2="${x.toFixed(1)}" y2="${py(k.l).toFixed(1)}" stroke="${col}" stroke-width="1"/>`;
+    candles += `<rect x="${(x-candleW/2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${candleW.toFixed(1)}" height="${bodyH.toFixed(1)}" fill="${col}"/>`;
+  });
+
+  const fmtP = p => '$'+Math.round(p).toLocaleString();
+  const hiY = py(priceMax).toFixed(1);
+  const loY = py(priceMin).toFixed(1);
+  const maLast = ma20[n-1];
+  const aboveMa = cur >= (maLast||0);
+
+  return `
+    <div style="width:100%;display:flex;flex-direction:column;align-items:center;padding:0 4px;margin-top:-8vh;">
+      <div style="font-size:15px;font-weight:600;letter-spacing:2px;color:#fff;margin-bottom:4px;">
+        BTC &nbsp;4H &nbsp;<span style="color:#ffd54a;font-size:13px;">5m · 48根</span>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;" xmlns="http://www.w3.org/2000/svg">
+        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT+chartH}" stroke="#222" stroke-width="1"/>
+        <line x1="${padL}" y1="${padT+chartH}" x2="${W-padR}" y2="${padT+chartH}" stroke="#222" stroke-width="1"/>
+        <line x1="${padL}" y1="${padT+chartH/2}" x2="${W-padR}" y2="${padT+chartH/2}" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="3,3"/>
+        ${candles}
+        ${maPoints ? `<polyline points="${maPoints}" fill="none" stroke="#ffd54a" stroke-width="1.5"/>` : ''}
+        <line x1="${padL}" y1="${curY}" x2="${W-padR}" y2="${curY}" stroke="#fff" stroke-width="1" stroke-dasharray="3,2"/>
+        <rect x="${W-padR+2}" y="${+curY-9}" width="${padR-4}" height="16" fill="#fff" rx="2"/>
+        <text x="${W-padR/2}" y="${+curY+4}" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" fill="#000">${fmtP(cur)}</text>
+        <text x="${W-padR+4}" y="${+hiY+4}" font-family="IBM Plex Mono,monospace" font-size="9" fill="#00ff66">${fmtP(priceMax)}</text>
+        <text x="${W-padR+4}" y="${+loY+4}" font-family="IBM Plex Mono,monospace" font-size="9" fill="#ff4444">${fmtP(priceMin)}</text>
+      </svg>
+      <div style="font-size:14px;font-weight:600;margin-top:4px;color:#fff;">
+        MA20&nbsp;<span style="color:#ffd54a;">${maLast ? fmtP(maLast) : '--'}</span>
+        &nbsp;·&nbsp;现价&nbsp;<span style="color:${aboveMa?'#00ff66':'#ff4444'}">${fmtP(cur)}</span>
+        &nbsp;·&nbsp;<span style="color:${aboveMa?'#00ff66':'#ff4444'}">${aboveMa?'均线上方':'均线下方'}</span>
+      </div>
+    </div>
+  `;
+}
+
+/* ── 渲染 ── */
+const pages = [p1, p2, p3, p4];
+
+function render(){
+  $('page').innerHTML = pages[idx]();
+  idx = (idx + 1) % pages.length;
+  $('footer').textContent =
+    `FR ${S.fr != null ? (S.fr*100).toFixed(4)+'%' : '--'}   ·   BTC.D ${S.btcDom?.toFixed(1)||'--'}%   ·   F&G ${S.fg||'--'}`;
+  animProg();
+  setTimeout(()=>window.scrollTo(0,1), 100);
+}
+
+/* ── 主循环：数据与页面分离 ── */
+async function fetchAll(){
+  await Promise.allSettled([fetchPrices(), fetchFG(), fetchFunding(), fetchGlobal(), fetchOI(), fetchKlines()]);
+}
+
+// 启动
+(async()=>{
+  await fetchAll();
+  render();
+  // 每5秒切页
+  setInterval(render, PAGE_MS);
+  // 每20秒重拉数据
+  setInterval(fetchAll, 20000);
+})();
+
+setInterval(tick, 1000);
+tick();
+</script>
+</body>
+</html>
